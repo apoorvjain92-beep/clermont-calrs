@@ -90,6 +90,8 @@
 {% if not invalid %}
 <script>
 (function () {
+  // After booking the page reloads as the visit pass, which starts at the top.
+  history.scrollRestoration = 'manual';
   var days = {{ days_json|safe }};
   var booked = {{ "true" if pass else "false" }};
   var token = {{ token|tojson }};
