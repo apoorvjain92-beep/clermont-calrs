@@ -830,7 +830,7 @@
   <script type="application/json" id="calendar-data">
   {
     "slotData": {
-      {% for day in days %}"{{ day.date }}": [{% for slot in day.slots %}{"start":"{{ slot.start }}","guestDate":"{{ slot.guest_date | default(value=day.date) }}","hostDate":"{{ slot.host_date }}","hostTime":"{{ slot.host_time }}"}{% if not loop.last %},{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}{% endfor %}
+      {% for day in days %}"{{ day.date }}": [{% for slot in day.slots %}{"start":"{{ slot.start }}","guestDate":"{{ slot.guest_date | default(value=day.date) }}","hostDate":"{{ slot.host_date }}","hostTime":"{{ slot.host_time }}"{% if slot.seats_left %},"left":{{ slot.seats_left }}{% endif %}}{% if not loop.last %},{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}{% endfor %}
     },
     "availableDates": { {% for d in available_dates %}"{{ d }}":true{% if not loop.last %},{% endif %}{% endfor %} },
     "firstWeekday": {{ first_weekday }},
@@ -1329,7 +1329,7 @@
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
       href += embedSuffix;
       if (canBook) {
-        html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
+        html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + (s.left ? ' · ' + s.left + ' left' : '') + '</a>';
       } else {
         html += '<span class="slot-pill" title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
       }
@@ -1570,7 +1570,7 @@
       for (var j = 0; j < slots.length; j++) {
         var hidden = j >= maxVisible ? ' style="display:none" data-week-overflow="' + i + '"' : '';
         if (canBook) {
-          html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
+          html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + (slots[j].left ? ' · ' + slots[j].left + ' left' : '') + '</a>';
         } else {
           html += '<span class="week-slot-pill"' + hidden + ' title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
         }
