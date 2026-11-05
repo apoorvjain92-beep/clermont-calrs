@@ -16,6 +16,11 @@ pub(super) async fn dashboard(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
+    // Salespeople work from the invitation page, not the host dashboard.
+    if user.role != "admin" && clermont::seated_event(&state.pool).await.is_some() {
+        return Redirect::to("/invites").into_response();
+    }
+
     let event_type_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.team_id IS NULL")
             .bind(&user.id)

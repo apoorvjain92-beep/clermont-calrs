@@ -383,7 +383,7 @@ pub(super) async fn move_visit(
     }
 }
 
-async fn seated_event(pool: &SqlitePool) -> Option<String> {
+pub(super) async fn seated_event(pool: &SqlitePool) -> Option<String> {
     sqlx::query_scalar("SELECT id FROM event_types WHERE seats_per_slot > 1 AND enabled = 1 LIMIT 1")
         .fetch_optional(pool)
         .await
