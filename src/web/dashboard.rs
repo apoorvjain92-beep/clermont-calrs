@@ -13,7 +13,7 @@ pub(super) async fn root_redirect() -> impl IntoResponse {
 pub(super) async fn dashboard(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-) -> impl IntoResponse {
+) -> Response {
     let user = &auth_user.user;
 
     // Salespeople work from the invitation page, not the host dashboard.
@@ -87,7 +87,7 @@ pub(super) async fn dashboard(
 
     let tmpl = match state.templates.get_template("dashboard_overview.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("template render", &e),
+        Err(e) => return internal_error_html("template render", &e).into_response(),
     };
 
     let host_tz = &user.timezone;
@@ -148,7 +148,7 @@ pub(super) async fn dashboard(
             impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
-    )
+    )    .into_response()
 }
 
 // --- Dashboard: Event Types ---
