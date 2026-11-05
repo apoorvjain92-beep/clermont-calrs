@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>The Clermont: guest list</title>
+<link rel="stylesheet" href="/c/look.css">
+</head>
+<body>
+<div class="wide">
+  <img src="/c/logo.png" alt="The Clermont" style="width:150px">
+  <div class="big">Guest list</div>
+  <p class="noprint">
+    <a class="ghost" style="display:inline-block;width:auto;padding:8px 18px" href="/guests.csv">Download CSV</a>
+    <a class="ghost" style="display:inline-block;width:auto;padding:8px 18px" href="/dashboard/bookings">Cancel a booking</a>
+    <button class="ghost" style="display:inline-block;width:auto;padding:8px 18px" type="button" id="print">Print</button>
+  </p>
+  {% for slot in slots %}
+  <div class="slotblock">
+    <div class="big" style="font-size:22px">{{ slot.label }} <span class="note">{{ slot.total }} persons</span></div>
+    <table class="list">
+      <tr><th>Guest</th><th>Persons</th><th>Mobile</th><th>Others</th><th>Salesperson</th></tr>
+      {% for g in slot.guests %}
+      <tr><td>{{ g.name }}</td><td>{{ g.party }}</td><td>{{ g.phone }}</td><td>{{ g.others }}</td><td>{{ g.salesperson }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% else %}
+  <p class="note">No bookings yet.</p>
+  {% endfor %}
+</div>
+<script>document.getElementById('print').onclick = function () { window.print(); };</script>
+</body>
+</html>

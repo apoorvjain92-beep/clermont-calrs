@@ -4,6 +4,7 @@ mod booking;
 mod booking_actions;
 mod branding;
 mod calendar_push;
+mod clermont;
 pub mod captcha;
 mod dashboard;
 mod event_types;
@@ -973,6 +974,15 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/bookings/{id}/reschedule",
             get(host_reschedule_slots).post(host_reschedule_booking),
         )
+        .route("/i/{token}", get(clermont::invitation))
+        .route("/i/{token}/book", post(clermont::book_visit))
+        .route("/i/{token}/move", post(clermont::move_visit))
+        .route(
+            "/invites",
+            get(clermont::sales_page).post(clermont::create_invite),
+        )
+        .route("/guests", get(clermont::guests_page))
+        .route("/guests.csv", get(clermont::guests_csv))
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))

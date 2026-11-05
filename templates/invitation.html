@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>The Clermont: by invitation</title>
+<link rel="stylesheet" href="/c/look.css">
+</head>
+<body>
+<div class="page">
+  <div class="top"><img src="/c/logo.png" alt="The Clermont"></div>
+
+  {% if invalid %}
+  <div class="card" style="padding-bottom:40px">
+    <div class="eyebrow">By invitation</div>
+    <div class="big">This invitation could not be found</div>
+    <p class="note">Please ask your ONE Group host to send it again.</p>
+  </div>
+  {% else %}
+
+  {% if pass %}
+  <div class="ticket">
+    <div class="big" style="font-size:24px">We look forward to welcoming you{% if guest_name %}, {{ guest_name }}{% endif %}</div>
+    <div class="div">— • —</div>
+    <dl>
+      <dt>Date and time</dt><dd>{{ pass.date }}, {{ pass.time }}</dd>
+      <dt>Guests</dt><dd>{{ pass.party }} {% if pass.party == 1 %}person{% else %}persons{% endif %}</dd>
+      {% if venue %}<dt>Venue</dt><dd>{{ venue }}</dd>{% endif %}
+      <dt>Your host</dt><dd>{{ host }}, ONE Group</dd>
+    </dl>
+    <a class="cta" href="{{ pass.ics }}">Add to calendar</a>
+    {% if venue %}<a class="ghost" href="{{ maps_url }}">Open in Maps</a>{% endif %}
+    {% if pass.can_change %}<button class="ghost" id="change" type="button">Change my visit</button>{% endif %}
+  </div>
+  <div class="form" id="picker" hidden>
+    <label>Choose a new date</label>
+    <div class="days" id="days"></div>
+    <div class="slots" id="slots"></div>
+    <p class="error" id="error" role="alert"></p>
+    <button class="cta" id="submit" type="button" disabled>Move my visit</button>
+  </div>
+  {% else %}
+  <div class="card">
+    <div class="eyebrow">By invitation</div>
+    <div class="big">{% if guest_name %}{{ guest_name }}, you{% else %}You{% endif %} have been invited to the exclusive preview of the sample flat unveiling</div>
+    <div class="div">— • —</div>
+  </div>
+  <div class="form" id="picker">
+    <label for="name">Your name</label>
+    <input id="name" value="{{ guest_name }}" autocomplete="name" maxlength="100">
+    <label for="mobile">Mobile number</label>
+    <input id="mobile" value="{{ masked_phone }}" readonly>
+    <label for="party">Number of persons</label>
+    <select id="party">{% for n in range(1, max_party + 1) %}<option value="{{ n }}">{{ n }} {% if n == 1 %}person{% else %}persons{% endif %}</option>{% endfor %}</select>
+    <label for="others">Names of others (optional)</label>
+    <input id="others" maxlength="500">
+    <label>Choose a date</label>
+    <div class="days" id="days"></div>
+    <div class="slots" id="slots"></div>
+    <p class="note">If there are more than {{ max_party }} persons, you will have to register separately.</p>
+    <p class="error" id="error" role="alert"></p>
+    <button class="cta" id="submit" type="button" disabled>Confirm my visit</button>
+  </div>
+  {% endif %}
+
+  <div class="about">
+    <div class="eyebrow">The Clermont</div>
+    <div class="big">The calm of a private street</div>
+    <p>Low-rise 3 BHK independent floors within ONE City Hamlet, a 150-acre township in Sector 98, Mohali.</p>
+    <div class="facts">
+      <div><b>216</b><span>independent floors</span></div>
+      <div><b>27</b><span>towers, stilt + 4</span></div>
+      <div><b>2,034</b><span>sq ft super area, from</span></div>
+      <div><b>₹1.60 Cr</b><span>onwards</span></div>
+    </div>
+    <img src="/c/02.jpg" alt="Landscaped garden at The Clermont">
+    <img src="/c/06.jpg" alt="Walking path at The Clermont">
+    <img src="/c/13.jpg" alt="Sports courts at The Clermont">
+  </div>
+  <div class="foot">
+    Your details are used only to arrange your visit.<br>
+    Punjab RERA PBRERA-SAS81-PR1246
+    <img src="/c/onegroup.png" alt="ONE Group">
+    <a href="https://github.com/olivierlambert/calrs">Built on calrs</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if not invalid %}
+<script>
+(function () {
+  var days = {{ days_json|safe }};
+  var booked = {{ "true" if pass else "false" }};
+  var token = {{ token|tojson }};
+  var choice = null, shownDay = null;
+  var $ = function (id) { return document.getElementById(id); };
+  var partyOf = function () { return $('party') ? Number($('party').value) : {{ pass.party if pass else 1 }}; };
+
+  function pickDay(date) {
+    shownDay = date;
+    choice = null;
+    $('submit').disabled = true;
+    $('days').querySelectorAll('.day').forEach(function (d) {
+      d.classList.toggle('on', d.dataset.date === date);
+    });
+    var day = days.filter(function (d) { return d.date === date; })[0];
+    var grid = $('slots');
+    grid.textContent = '';
+    (day ? day.slots : []).forEach(function (s) {
+      var full = s.left < partyOf();
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'slot' + (s.left > 0 && s.left < 5 ? ' few' : '');
+      b.disabled = full;
+      b.textContent = s.label;
+      var small = document.createElement('small');
+      small.textContent = s.left === 0 ? 'Full' : (full ? 'Only ' + s.left + ' left' : s.left + ' left');
+      b.appendChild(small);
+      b.onclick = function () {
+        grid.querySelectorAll('.slot').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        choice = s;
+        $('submit').disabled = false;
+        $('error').textContent = '';
+      };
+      grid.appendChild(b);
+    });
+  }
+
+  function drawDays() {
+    var bar = $('days');
+    bar.textContent = '';
+    days.forEach(function (d) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'day';
+      b.dataset.date = d.date;
+      var n = document.createElement('b');
+      n.textContent = d.number;
+      b.appendChild(n);
+      b.appendChild(document.createTextNode(d.weekday + ' ' + d.month));
+      b.onclick = function () { pickDay(d.date); };
+      bar.appendChild(b);
+    });
+    if (days.length) pickDay(shownDay || days[0].date);
+    else $('error').textContent = 'New dates will open soon.';
+  }
+
+  function send(path, fields) {
+    $('submit').disabled = true;
+    $('error').textContent = '';
+    fetch('/i/' + token + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString()
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      if (r.ok) { location.reload(); return; }
+      $('error').textContent = r.error;
+      refresh();
+    }).catch(function () {
+      $('error').textContent = 'Please check your connection and try again.';
+      $('submit').disabled = false;
+    });
+  }
+
+  // After a refusal the seats have moved, so fetch them again and keep what
+  // the guest typed.
+  function refresh() {
+    fetch(location.pathname).then(function (r) { return r.text(); }).then(function (html) {
+      var m = html.match(/var days = (\[.*\]);/);
+      if (m) { days = JSON.parse(m[1]); drawDays(); }
+    });
+  }
+
+  $('submit').onclick = function () {
+    if (!choice) return;
+    if (booked) {
+      send('/move', { date: choice.date, time: choice.time });
+      return;
+    }
+    if (!$('name').value.trim()) {
+      $('error').textContent = 'Please enter your name.';
+      return;
+    }
+    send('/book', {
+      name: $('name').value, party_size: $('party').value, others: $('others').value,
+      date: choice.date, time: choice.time
+    });
+  };
+  if ($('party')) $('party').onchange = function () { if (shownDay) pickDay(shownDay); };
+  if ($('change')) $('change').onclick = function () { $('picker').hidden = false; $('change').hidden = true; };
+  drawDays();
+})();
+</script>
+{% endif %}
+</body>
+</html>

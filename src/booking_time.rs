@@ -33,10 +33,7 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
               SELECT 1 FROM team_members tm
               WHERE tm.team_id = et.team_id AND tm.user_id = ?)))
    AND {status}
-   AND (et.seats_per_slot <= 1 OR (
-        SELECT COALESCE(SUM(s.party_size), 0) FROM bookings s
-        WHERE s.event_type_id = b.event_type_id AND s.start_at = b.start_at
-          AND s.status IN ('confirmed', 'pending')) >= et.seats_per_slot)"
+   AND et.seats_per_slot <= 1"
     )
 }
 

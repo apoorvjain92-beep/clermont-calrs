@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>The Clermont: invitations</title>
+<link rel="stylesheet" href="/c/look.css">
+</head>
+<body>
+<div class="page">
+  <div class="form" style="padding-top:20px">
+    <img src="/c/onegroup.png" alt="ONE Group" style="width:90px">
+    <div class="big" style="font-size:25px">New invitation</div>
+    <label for="phone">Customer's mobile number</label>
+    <input id="phone" inputmode="tel" autocomplete="off">
+    <label for="name">Customer's name (optional)</label>
+    <input id="name" maxlength="100" autocomplete="off">
+    <p class="error" id="error" role="alert"></p>
+    <button class="cta green" id="send" type="button">Send on WhatsApp</button>
+    <p class="note">Opens your WhatsApp with the message ready. You tap send.</p>
+
+    <div class="eyebrow" style="margin-top:24px">My invitations</div>
+    <table class="list">
+      <tr><th>Guest</th><th>Status</th></tr>
+      {% for i in invites %}
+      <tr>
+        <td>{{ i.name or i.phone }}</td>
+        <td>
+          {% if i.when %}
+          <span class="pill ok">{{ i.when }}, {{ i.party }} {% if i.party == 1 %}person{% else %}persons{% endif %}</span><br>
+          <button class="mini" type="button" data-token="{{ i.token }}" data-phone="{{ i.phone }}" data-name="{{ i.name }}" data-when="{{ i.when }}">Remind</button>
+          {% elif i.cancelled %}
+          <span class="pill off">Cancelled</span>
+          {% else %}
+          <span class="pill">Sent</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="2" class="note">No invitations yet.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+<script>
+(function () {
+  var who = {{ salesperson|tojson }};
+  var link = function (token) { return location.origin + '/i/' + token; };
+  var open = function (phone, text) {
+    location.href = 'https://wa.me/91' + phone + '?text=' + encodeURIComponent(text);
+  };
+  var csrf = function () {
+    var m = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
+    return m ? m[1] : '';
+  };
+  var err = document.getElementById('error');
+
+  document.getElementById('send').onclick = function () {
+    err.textContent = '';
+    fetch('/invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        _csrf: csrf(),
+        phone: document.getElementById('phone').value,
+        name: document.getElementById('name').value
+      }).toString()
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      if (!r.ok) { err.textContent = r.error; return; }
+      open(r.phone, (r.name ? 'Dear ' + r.name + ',\n' : '') +
+        'You have been invited to the exclusive preview of the sample flat unveiling at The Clermont, Mohali.\n' +
+        'Please choose your visit time here: ' + link(r.token) + '\n' +
+        'This invitation is personal to you.\n' + who + ', ONE Group');
+    }).catch(function () { err.textContent = 'Please check your connection and try again.'; });
+  };
+
+  document.querySelectorAll('.mini').forEach(function (b) {
+    b.onclick = function () {
+      open(b.dataset.phone, (b.dataset.name ? 'Dear ' + b.dataset.name + ', looking' : 'Looking') +
+        ' forward to welcoming you to The Clermont sample flat on ' + b.dataset.when +
+        '. Your visit details: ' + link(b.dataset.token) + '\n' + who + ', ONE Group');
+    };
+  });
+})();
+</script>
+</body>
+</html>
