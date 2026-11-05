@@ -1645,6 +1645,19 @@ pub(super) async fn handle_booking_for_user(
         None
     };
 
+    // Seated bookings take turns from here to the commit. The lock comes
+    // before the transaction: each transaction holds a pooled connection, so
+    // waiting for the lock while holding one would starve the reads below.
+    let seats = match crate::booking_time::seats_per_slot(&state.pool, &et_id).await {
+        Ok(seats) => seats,
+        Err(e) => return internal_error_response("booking conflict check", &e),
+    };
+    let seat_guard = if seats > 1 {
+        Some(crate::resources::booking_lock().await)
+    } else {
+        None
+    };
+
     // Start a transaction to ensure atomicity of availability check + insert.
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
@@ -1726,12 +1739,48 @@ pub(super) async fn handle_booking_for_user(
         .into_iter()
         .map(|r| r.id)
         .collect();
-    let resource_guard = if resource_ids.is_empty() {
+    let party_size = if seats > 1 {
+        form.party_size.unwrap_or(1)
+    } else {
+        1
+    };
+    if party_size < 1 || party_size > i64::from(max_additional_guests) + 1 {
+        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
+    }
+    let resource_guard = if resource_ids.is_empty() || seat_guard.is_some() {
         None
     } else {
         crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
         Some(crate::resources::booking_lock().await)
     };
+    if seats > 1 {
+        match crate::booking_time::seats_taken(&state.pool, &et_id, &start_at, "").await {
+            Ok(taken) if taken + party_size <= seats => {}
+            Ok(_) => {
+                let _ = tx.rollback().await;
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
+            }
+            Err(e) => return internal_error_response("booking conflict check", &e),
+        }
+        // Used up here, not after the commit: a double submit of a one-time
+        // link must not reach the insert twice.
+        if let Some(token) = form.invite_token.as_deref().filter(|t| !t.is_empty()) {
+            let spent = sqlx::query(
+                "UPDATE booking_invites SET used_count = used_count + 1
+                 WHERE token = ? AND used_count < max_uses",
+            )
+            .bind(token)
+            .execute(&mut *tx)
+            .await;
+            if !matches!(spent, Ok(ref done) if done.rows_affected() == 1) {
+                let _ = tx.rollback().await;
+                return Html(crate::i18n::translate(lang, "error-invite-used", None))
+                    .into_response();
+            }
+        }
+    }
+    let seat_key = if seats > 1 { id.as_str() } else { "" };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -1760,8 +1809,8 @@ pub(super) async fn handle_booking_for_user(
         Err(e) => return internal_error_response("booking conflict check", &e),
     }
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone, party_size, seat_key)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -1782,6 +1831,8 @@ pub(super) async fn handle_booking_for_user(
     .bind(lang)
     .bind(&assigned_resource_id)
     .bind(&phone_to_store)
+    .bind(party_size)
+    .bind(seat_key)
     .execute(&mut *tx)
     .await;
 
@@ -1821,11 +1872,12 @@ pub(super) async fn handle_booking_for_user(
         return internal_error_response("database query", &e);
     }
     drop(resource_guard);
+    drop(seat_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
     // Increment invite used_count if this was an invite-based booking
-    if visibility == "private" || visibility == "internal" {
+    if seats <= 1 && (visibility == "private" || visibility == "internal") {
         if let Some(token) = &form.invite_token {
             let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
                 .bind(token)
@@ -2121,6 +2173,9 @@ pub(super) struct BookForm {
     /// `sms_phone_mode` set; ignored otherwise even if posted.
     #[serde(default)]
     phone: Option<String>,
+    /// Seats this booking takes on a seated event type, the guest included.
+    #[serde(default)]
+    party_size: Option<i64>,
 }
 
 /// Whether `user` may put an event type into an SMS-sending mode.
@@ -2510,12 +2565,38 @@ pub(super) async fn handle_booking(
         .into_iter()
         .map(|r| r.id)
         .collect();
-    let resource_guard = if resource_ids.is_empty() {
+    let seats = match crate::booking_time::seats_per_slot(&state.pool, &et_id).await {
+        Ok(seats) => seats,
+        Err(e) => return internal_error_response("booking conflict check", &e),
+    };
+    let party_size = if seats > 1 {
+        form.party_size.unwrap_or(1)
+    } else {
+        1
+    };
+    if party_size < 1 || party_size > i64::from(max_additional_guests) + 1 {
+        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
+    }
+    // Seats join the resource lock: the count below and the insert must not
+    // interleave with another booking for the same slot.
+    let resource_guard = if resource_ids.is_empty() && seats <= 1 {
         None
     } else {
         crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
         Some(crate::resources::booking_lock().await)
     };
+    if seats > 1 {
+        match crate::booking_time::seats_taken(&state.pool, &et_id, &start_at, "").await {
+            Ok(taken) if taken + party_size <= seats => {}
+            Ok(_) => {
+                let _ = tx.rollback().await;
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
+            }
+            Err(e) => return internal_error_response("booking conflict check", &e),
+        }
+    }
+    let seat_key = if seats > 1 { id.as_str() } else { "" };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -2544,8 +2625,8 @@ pub(super) async fn handle_booking(
         Err(e) => return internal_error_response("booking conflict check", &e),
     }
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone, party_size, seat_key)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -2566,6 +2647,8 @@ pub(super) async fn handle_booking(
     .bind(lang)
     .bind(&assigned_resource_id)
     .bind(&phone_to_store)
+    .bind(party_size)
+    .bind(seat_key)
     .execute(&mut *tx)
     .await;
 

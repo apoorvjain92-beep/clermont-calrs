@@ -1073,6 +1073,7 @@ async fn show_dynamic_group_slots(
         vec![]
     };
 
+    let seats_left = seats_left_lookup(&state.pool, &et_id, host_tz).await;
     let days_ctx: Vec<minijinja::Value> = slot_days
         .iter()
         .map(|d| {
@@ -1080,7 +1081,7 @@ async fn show_dynamic_group_slots(
                 .slots
                 .iter()
                 .map(|s| {
-                    context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date }
+                    context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date, seats_left => seats_left(&s.host_date, &s.host_time) }
                 })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
@@ -1585,13 +1586,14 @@ pub(super) async fn show_slots_for_user(
     )
     .await;
 
+    let seats_left = seats_left_lookup(&state.pool, &et_id, host_tz).await;
     let days_ctx: Vec<minijinja::Value> = slot_days
         .iter()
         .map(|d| {
             let slots: Vec<minijinja::Value> = d
                 .slots
                 .iter()
-                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date })
+                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date, seats_left => seats_left(&s.host_date, &s.host_time) })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
         })
@@ -2399,4 +2401,29 @@ pub(super) async fn show_book_form(
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
+}
+
+/// Seats left in a slot, by the host date and time the slot page carries.
+/// `None` on an ordinary one-to-one event type.
+async fn seats_left_lookup(
+    pool: &SqlitePool,
+    et_id: &str,
+    host_tz: Tz,
+) -> impl Fn(&str, &str) -> Option<i64> {
+    let seats = crate::booking_time::seats_per_slot(pool, et_id)
+        .await
+        .unwrap_or(1);
+    let taken = crate::booking_time::seats_taken_by_start(pool, et_id)
+        .await
+        .unwrap_or_default();
+    move |date, time| {
+        (seats > 1).then(|| {
+            let start = NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H:%M")
+                .ok()
+                .and_then(|n| crate::booking_time::encode(n, host_tz, 0))
+                .map(|(start, _)| start)
+                .unwrap_or_default();
+            seats - taken.get(&start).copied().unwrap_or(0)
+        })
+    }
 }

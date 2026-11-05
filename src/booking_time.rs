@@ -32,8 +32,58 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
         OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
               SELECT 1 FROM team_members tm
               WHERE tm.team_id = et.team_id AND tm.user_id = ?)))
-   AND {status}"
+   AND {status}
+   AND (et.seats_per_slot <= 1 OR (
+        SELECT COALESCE(SUM(s.party_size), 0) FROM bookings s
+        WHERE s.event_type_id = b.event_type_id AND s.start_at = b.start_at
+          AND s.status IN ('confirmed', 'pending')) >= et.seats_per_slot)"
     )
+}
+
+/// Seats per slot for an event type; 1 means an ordinary one-to-one booking.
+pub async fn seats_per_slot(pool: &SqlitePool, event: &str) -> anyhow::Result<i64> {
+    Ok(
+        sqlx::query_scalar("SELECT seats_per_slot FROM event_types WHERE id = ?")
+            .bind(event)
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+/// Seats held at `utc_start`, leaving out the booking being moved. Callers
+/// hold `resources::booking_lock` from this read until their write commits.
+pub async fn seats_taken(
+    pool: &SqlitePool,
+    event: &str,
+    utc_start: &str,
+    exclude: &str,
+) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar(
+        "SELECT COALESCE(SUM(party_size), 0) FROM bookings
+         WHERE event_type_id = ? AND start_at = ? AND id != ?
+           AND status IN ('confirmed', 'pending')",
+    )
+    .bind(event)
+    .bind(utc_start)
+    .bind(exclude)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Seats held per slot start, for showing what is left on the slot page.
+pub async fn seats_taken_by_start(
+    pool: &SqlitePool,
+    event: &str,
+) -> anyhow::Result<std::collections::HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT start_at, SUM(party_size) FROM bookings
+         WHERE event_type_id = ? AND status IN ('confirmed', 'pending')
+         GROUP BY start_at",
+    )
+    .bind(event)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 pub fn naive(value: &str) -> Option<NaiveDateTime> {
@@ -175,6 +225,9 @@ pub async fn legacy_slot_taken(
     utc_start: &str,
     exclude: &str,
 ) -> anyhow::Result<bool> {
+    if seats_per_slot(pool, event).await? > 1 {
+        return Ok(false);
+    }
     let tz = event_timezone(pool, event).await?;
     let target = local(utc_start, tz, tz);
     let starts: Vec<String> = sqlx::query_scalar("SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at FROM bookings WHERE event_type_id = ? AND time_version = 0 AND status IN ('confirmed','pending') AND COALESCE(assigned_user_id,'') = ? AND id != ?")

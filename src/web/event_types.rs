@@ -232,6 +232,9 @@ pub(super) struct EventTypeForm {
     // Additional guests
     #[serde(default)]
     pub(super) max_additional_guests: String,
+    // People per slot; 1 is an ordinary one-to-one booking
+    #[serde(default)]
+    pub(super) seats_per_slot: String,
     // Member priorities for round-robin (creation flow): "uid1:3,uid2:1,uid3:2"
     #[serde(default)]
     member_priorities: String,
@@ -602,6 +605,7 @@ pub(super) async fn new_event_type_form(
             form_avail_schedule => user_avail,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
+            form_seats_per_slot => 1,
             form_default_calendar_view => "month",
             week_start_setting => week_start::new_event(&state.pool, &user.id).await,
             form_first_slot_only => false,
@@ -818,6 +822,7 @@ pub(super) async fn create_event_type(
         return event_type_write_failed(&state, &auth_user, &form, FormTarget::NewPersonal, &e)
             .await;
     }
+    save_seats_per_slot(&state.pool, &et_id, &form).await;
     save_pending_settings(&state.pool, &et_id, &form, true).await;
 
     tracing::info!(slug = %slug, user = %auth_user.user.email, "event type created");
@@ -1187,6 +1192,7 @@ pub(super) async fn edit_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            form_seats_per_slot => crate::booking_time::seats_per_slot(&state.pool, &et_id).await.unwrap_or(1),
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             week_start_setting => week_start::event(&state.pool, &et_id).await,
@@ -1446,6 +1452,7 @@ pub(super) async fn update_event_type(
         )
         .await;
     }
+    save_seats_per_slot(&state.pool, &et_id, &form).await;
     save_pending_settings(&state.pool, &et_id, &form, false).await;
 
     // Update availability rules: delete old, insert new. Pass the user's
@@ -2204,6 +2211,7 @@ async fn render_event_type_form_error(
                 .context(),
             form_reminder_minutes => parse_int_field(&form.reminder_minutes, 0),
             form_max_additional_guests => parse_int_field(&form.max_additional_guests, 0),
+            form_seats_per_slot => parse_int_field(&form.seats_per_slot, 1),
             form_scheduling_mode => scheduling_mode,
             is_group => is_group,
             form_team_id => form_team_id,
@@ -3058,6 +3066,7 @@ pub(super) async fn edit_group_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            form_seats_per_slot => crate::booking_time::seats_per_slot(&state.pool, &et_id).await.unwrap_or(1),
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             week_start_setting => week_start::event(&state.pool, &et_id).await,
@@ -3342,6 +3351,7 @@ pub(super) async fn update_group_event_type(
         )
         .await;
     }
+    save_seats_per_slot(&state.pool, &et_id, &form).await;
     save_pending_settings(&state.pool, &et_id, &form, false).await;
 
     // Update availability rules. Pass the editing user's profile-default
@@ -3824,4 +3834,16 @@ async fn copy_event_type_children(tx: &mut Tx<'_>, from: &str, to: &str) -> sqlx
         .await?;
     }
     Ok(())
+}
+
+/// A blank or unparsable value leaves the stored seats as they are. Lowering
+/// seats below the people already booked just stops the slot taking more.
+async fn save_seats_per_slot(pool: &SqlitePool, et_id: &str, form: &EventTypeForm) {
+    if let Ok(seats) = form.seats_per_slot.trim().parse::<i64>() {
+        let _ = sqlx::query("UPDATE event_types SET seats_per_slot = ? WHERE id = ?")
+            .bind(seats.max(1))
+            .bind(et_id)
+            .execute(pool)
+            .await;
+    }
 }

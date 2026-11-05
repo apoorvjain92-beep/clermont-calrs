@@ -1931,7 +1931,11 @@ pub(super) async fn guest_reschedule_booking(
             .into_iter()
             .map(|r| r.id)
             .collect();
-    let resource_guard = if resched_resource_ids.is_empty() {
+    let seats = match crate::booking_time::seats_per_slot(&state.pool, &et_id).await {
+        Ok(seats) => seats,
+        Err(e) => return internal_error_response("booking conflict check", &e),
+    };
+    let resource_guard = if resched_resource_ids.is_empty() && seats <= 1 {
         None
     } else {
         crate::resources::sync_if_stale(&state.pool, &resched_resource_ids).await;
@@ -1999,6 +2003,23 @@ pub(super) async fn guest_reschedule_booking(
         None
     };
 
+    if seats > 1 {
+        let party: i64 = sqlx::query_scalar("SELECT party_size FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(1);
+        match crate::booking_time::seats_taken(&state.pool, &et_id, &new_start_at, &booking_id)
+            .await
+        {
+            Ok(taken) if taken + party <= seats => {}
+            Ok(_) => {
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response()
+            }
+            Err(e) => return internal_error_response("booking conflict check", &e),
+        }
+    }
     let assigned_member: Option<String> =
         sqlx::query_scalar("SELECT assigned_user_id FROM bookings WHERE id = ?")
             .bind(&booking_id)
